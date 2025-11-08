@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	TaskTimeout = 10 * time.Second
+	TaskTimeout     = 10 * time.Second
 	MonitorInterval = 1 * time.Second
 )
 
@@ -129,7 +129,7 @@ func (c *Coordinator) TaskComplete(args *TaskCompleteArgs, reply *TaskCompleteRe
 	switch args.TaskType {
 	case MapTask:
 		// Verify task is in progress and belongs to the reporting worker
-		if args.TaskID < len(c.mapTasks) && 
+		if args.TaskID < len(c.mapTasks) &&
 			c.mapTasks[args.TaskID].State == InProgress &&
 			c.mapTasks[args.TaskID].WorkerID == args.WorkerID {
 			c.mapTasks[args.TaskID].State = Completed
@@ -147,7 +147,7 @@ func (c *Coordinator) TaskComplete(args *TaskCompleteArgs, reply *TaskCompleteRe
 		}
 	case ReduceTask:
 		// Verify task is in progress and belongs to the reporting worker
-		if args.TaskID < len(c.reduceTasks) && 
+		if args.TaskID < len(c.reduceTasks) &&
 			c.reduceTasks[args.TaskID].State == InProgress &&
 			c.reduceTasks[args.TaskID].WorkerID == args.WorkerID {
 			c.reduceTasks[args.TaskID].State = Completed
