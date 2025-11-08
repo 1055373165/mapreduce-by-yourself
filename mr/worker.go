@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -56,7 +57,9 @@ func requestTask(workerID string) Task {
 
 	ok := call("Coordinator.GetTask", &args, &reply)
 	if !ok {
-		log.Fatal("[Worker %s] Failed to get task", workerID)
+		log.Printf("[Worker %s] Failed to get task, coordinator may be down", workerID)
+		// Return exit task if coordinator is unreachable
+		return Task{TaskType: ExitTask}
 	}
 
 	return reply.Task
@@ -96,17 +99,38 @@ func doMap(workerID string, task Task, mapf func(string, string) []KeyValue) {
 		intermediate[reduceID] = append(intermediate[reduceID], kv)
 	}
 
-	// 4. write intermediate to files
+	// 4. write intermediate to files (atomic write using temp file + rename)
 	for i := 0; i < task.NReduce; i++ {
 		filename := fmt.Sprintf("mr-%d-%d", task.TaskID, i)
-		file, _ := os.Create(filename)
+		
+		// Create temporary file
+		tmpFile, err := ioutil.TempFile("", "mr-tmp-*")
+		if err != nil {
+			log.Fatalf("[Worker %s] Cannot create temp file: %v", workerID, err)
+		}
+		tmpName := tmpFile.Name()
 
-		enc := json.NewEncoder(file)
+		// Use buffered writer for better performance
+		bufWriter := bufio.NewWriter(tmpFile)
+		enc := json.NewEncoder(bufWriter)
 		for _, kv := range intermediate[i] {
-			enc.Encode(&kv)
+			if err := enc.Encode(&kv); err != nil {
+				log.Fatalf("[Worker %s] Cannot encode KV: %v", workerID, err)
+			}
+		}
+		
+		if err := bufWriter.Flush(); err != nil {
+			log.Fatalf("[Worker %s] Cannot flush buffer: %v", workerID, err)
 		}
 
-		file.Close()
+		if err := tmpFile.Close(); err != nil {
+			log.Fatalf("[Worker %s] Cannot close temp file: %v", workerID, err)
+		}
+		
+		// Atomic rename
+		if err := os.Rename(tmpName, filename); err != nil {
+			log.Fatalf("[Worker %s] Cannot rename temp file: %v", workerID, err)
+		}
 	}
 
 	log.Printf("[Worker %s] Map task %d completed, generated %d intermediate files", workerID, task.TaskID, task.NReduce)
@@ -117,7 +141,8 @@ func doReduce(workerID string, task Task, reducef func(string, []string) string)
 	log.Printf("[Worker %s] Executing Reduce task %d", workerID, task.ReduceID)
 
 	// 1. read all intermediate files
-	var intermediate []KeyValue
+	// Pre-allocate with estimated capacity to reduce reallocations
+	intermediate := make([]KeyValue, 0, 1000)
 	for mapID := 0; mapID < task.NMap; mapID++ {
 		filename := fmt.Sprintf("mr-%d-%d", mapID, task.ReduceID)
 
@@ -145,9 +170,14 @@ func doReduce(workerID string, task Task, reducef func(string, []string) string)
 	sort.Sort(ByKey(intermediate))
 
 	// 3. create tmp output file
-	tmpFile, _ := ioutil.TempFile("", "mr-out-*")
+	tmpFile, err := ioutil.TempFile("", "mr-out-*")
+	if err != nil {
+		log.Fatalf("[Worker %s] Cannot create temp output file: %v", workerID, err)
+	}
 
 	// 4. group and call the Reduce function
+	// Use buffered writer for better performance
+	bufWriter := bufio.NewWriter(tmpFile)
 	i := 0
 	for i < len(intermediate) {
 		j := i + 1
@@ -161,15 +191,23 @@ func doReduce(workerID string, task Task, reducef func(string, []string) string)
 		}
 
 		output := reducef(intermediate[i].Key, values)
-		fmt.Fprintf(tmpFile, "%v %v\n", intermediate[i].Key, output)
+		fmt.Fprintf(bufWriter, "%v %v\n", intermediate[i].Key, output)
 		i = j
 	}
+	
+	if err := bufWriter.Flush(); err != nil {
+		log.Fatalf("[Worker %s] Cannot flush output buffer: %v", workerID, err)
+	}
 
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		log.Fatalf("[Worker %s] Cannot close temp output file: %v", workerID, err)
+	}
 
 	// 5. atomic rename
 	outputFile := fmt.Sprintf("mr-out-%d", task.ReduceID)
-	os.Rename(tmpFile.Name(), outputFile)
+	if err := os.Rename(tmpFile.Name(), outputFile); err != nil {
+		log.Fatalf("[Worker %s] Cannot rename output file: %v", workerID, err)
+	}
 
 	log.Printf("[Worker %s] Reduce task %d completed, output: %s", workerID, task.ReduceID, outputFile)
 }
@@ -181,12 +219,13 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-// call send rpc request
+// call send rpc request with retry logic
 func call(rpcname string, args interface{}, reply interface{}) bool {
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Fatal("dialing: ", err)
+		log.Printf("[Worker] Failed to dial coordinator: %v", err)
+		return false
 	}
 	defer c.Close()
 
@@ -195,6 +234,6 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	log.Println(err)
+	log.Printf("[Worker] RPC call %s failed: %v", rpcname, err)
 	return false
 }

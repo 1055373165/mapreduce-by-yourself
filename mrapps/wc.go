@@ -4,13 +4,14 @@ import (
 	"mapreduce/mr"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // Map Split text into words
 func Map(filename string, contents string) []mr.KeyValue {
-	// Tokenization function
-	ff := func(r rune) bool { return !unicode.IsLetter(r) }
+	// Tokenization function (only letters)
+	ff := func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'))
+	}
 
 	// Split text into words
 	words := strings.FieldsFunc(contents, ff)

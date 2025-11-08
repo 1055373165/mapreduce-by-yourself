@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+const (
+	TaskTimeout = 10 * time.Second
+	MonitorInterval = 1 * time.Second
+)
+
 // Task internal trace info
 type TaskInfo struct {
 	State     TaskState
@@ -123,7 +128,10 @@ func (c *Coordinator) TaskComplete(args *TaskCompleteArgs, reply *TaskCompleteRe
 
 	switch args.TaskType {
 	case MapTask:
-		if args.TaskID < len(c.mapTasks) && c.mapTasks[args.TaskID].State == InProgress {
+		// Verify task is in progress and belongs to the reporting worker
+		if args.TaskID < len(c.mapTasks) && 
+			c.mapTasks[args.TaskID].State == InProgress &&
+			c.mapTasks[args.TaskID].WorkerID == args.WorkerID {
 			c.mapTasks[args.TaskID].State = Completed
 			log.Printf("[Coordinator] Map task %d completed by worker %s", args.TaskID, args.WorkerID)
 
@@ -132,9 +140,16 @@ func (c *Coordinator) TaskComplete(args *TaskCompleteArgs, reply *TaskCompleteRe
 				log.Println("[Coordinator] All map tasks completed, transitioning to reduce phase")
 				c.phase = "reduce"
 			}
+		} else {
+			log.Printf("[Coordinator] Ignoring stale completion report for Map task %d from worker %s", args.TaskID, args.WorkerID)
+			reply.Success = false
+			return nil
 		}
 	case ReduceTask:
-		if args.TaskID < len(c.reduceTasks) && c.reduceTasks[args.TaskID].State == InProgress {
+		// Verify task is in progress and belongs to the reporting worker
+		if args.TaskID < len(c.reduceTasks) && 
+			c.reduceTasks[args.TaskID].State == InProgress &&
+			c.reduceTasks[args.TaskID].WorkerID == args.WorkerID {
 			c.reduceTasks[args.TaskID].State = Completed
 			log.Printf("[Coordinator] Reduce task %d completed by worker %s", args.TaskID, args.WorkerID)
 
@@ -144,6 +159,10 @@ func (c *Coordinator) TaskComplete(args *TaskCompleteArgs, reply *TaskCompleteRe
 				c.phase = "done"
 				c.done = true
 			}
+		} else {
+			log.Printf("[Coordinator] Ignoring stale completion report for Reduce task %d from worker %s", args.TaskID, args.WorkerID)
+			reply.Success = false
+			return nil
 		}
 	}
 
@@ -151,16 +170,16 @@ func (c *Coordinator) TaskComplete(args *TaskCompleteArgs, reply *TaskCompleteRe
 	return nil
 }
 
-// monnitor task timeout
+// monitor task timeout
 func (c *Coordinator) monitor() {
 	for !c.Done() {
-		time.Sleep(1 * time.Second)
+		time.Sleep(MonitorInterval)
 
 		c.mu.Lock()
 
 		if c.phase == "map" {
 			for i, task := range c.mapTasks {
-				if task.State == InProgress && time.Since(task.StartTime) > 10*time.Second {
+				if task.State == InProgress && time.Since(task.StartTime) > TaskTimeout {
 					log.Printf("[Coordinator] Map task %d timeout, resetting", i)
 					c.mapTasks[i].State = Idle
 				}
@@ -169,7 +188,7 @@ func (c *Coordinator) monitor() {
 
 		if c.phase == "reduce" {
 			for i, task := range c.reduceTasks {
-				if task.State == InProgress && time.Since(task.StartTime) > 10*time.Second {
+				if task.State == InProgress && time.Since(task.StartTime) > TaskTimeout {
 					log.Printf("[Coordinator] Reduce task %d timeout, resetting", i)
 					c.reduceTasks[i].State = Idle
 				}

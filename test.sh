@@ -28,8 +28,8 @@ wait $COORDINATOR_PID
 
 echo "Job completed!"
 
-# 合并输出
-cat mr-out-* | sort > mr-output.txt
+# 合并输出并按计数值排序
+cat mr-out-* | sort | uniq -c | sort -rn > mr-output.txt
 
 echo "Results written to mr-output.txt"
 
@@ -37,5 +37,5 @@ echo "Results written to mr-output.txt"
 kill $WORKER1_PID $WORKER2_PID $WORKER3_PID 2>/dev/null
 
 # 显示前 10 行结果
-echo "=== Top 10 words ==="
-head -10 mr-output.txt
+echo "=== Top 100 words ==="
+head -100 mr-output.txt
