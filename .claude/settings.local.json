@@ -3,7 +3,10 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit -m \"$(cat <<''EOF''\ndocs: 编写符合 GitHub 最佳实践的 README 文档\n\n添加完整的项目文档，包括：\n- 项目简介和特性亮点，添加徽章展示\n- 详细的快速开始指南和安装说明\n- 系统架构设计图和执行流程说明\n- 容错机制、原子操作、高效实现等关键特性\n- 完整的使用指南和项目结构说明\n- 自定义应用开发指南和示例解析\n- RPC API 文档和配置参数说明\n- 测试方法和贡献指南\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(go build:*)",
+      "Bash(chmod:*)",
+      "Bash(./test-urlcount.sh:*)"
     ],
     "deny": [],
     "ask": []

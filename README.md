@@ -139,15 +139,19 @@ cat mr-out-* | sort
 mapreduce/
 ├── main/
 │   ├── mrcoordinator.go    # Coordinator 启动程序
-│   └── mrworker.go          # Worker 启动程序
+│   └── mrworker.go          # Worker 启动程序（支持多应用）
 ├── mr/
 │   ├── coordinator.go       # Coordinator 核心逻辑
 │   ├── worker.go            # Worker 核心逻辑
 │   └── rpc.go               # RPC 数据结构定义
 ├── mrapps/
-│   └── wc.go                # Word Count 应用示例
+│   ├── wc.go                # Word Count 应用示例
+│   └── urlcount/
+│       └── urlcount.go      # URL 访问统计应用示例
 ├── pg-*.txt                 # 示例输入文件（文本数据）
-└── test.sh                  # 自动化测试脚本
+├── access-log-*.txt         # 示例 Web 日志文件
+├── test.sh                  # Word Count 测试脚本
+└── test-urlcount.sh         # URL Count 测试脚本
 ```
 
 ### 运行参数
@@ -164,10 +168,17 @@ go run main/mrcoordinator.go pg-11.txt pg-1342.txt pg-1661.txt
 #### Worker
 
 ```bash
-go run main/mrworker.go <plugin.so>
+./mrworker <app-name>
 
-# 对于 Word Count 应用
-go run main/mrworker.go mrapps/wc.go
+# 可用的应用：
+# - wc / wc.so        : Word Count（词频统计）
+# - urlcount / urlcount.so : URL 访问统计
+
+# 示例：运行 Word Count 应用
+./mrworker wc
+
+# 示例：运行 URL 访问统计应用
+./mrworker urlcount
 ```
 
 ### 输出文件
@@ -230,10 +241,112 @@ func Reduce(key string, values []string) string {
 }
 ```
 
+### URL 访问统计示例
+
+**应用场景**：分析 Web 服务器日志，统计每个 URL 的访问次数
+
+#### 实现代码
+
+```go
+package urlcount
+
+import (
+    "mapreduce/mr"
+    "strconv"
+    "strings"
+)
+
+// Map: 从 Web 服务器日志中提取 URL
+// 支持 Apache/Nginx Common/Combined Log Format
+// 示例: 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326
+func Map(filename string, contents string) []mr.KeyValue {
+    lines := strings.Split(contents, "\n")
+    var kva []mr.KeyValue
+
+    for _, line := range lines {
+        // 跳过空行
+        if len(strings.TrimSpace(line)) == 0 {
+            continue
+        }
+
+        // 提取 URL
+        url := extractURL(line)
+        if url != "" {
+            kva = append(kva, mr.KeyValue{Key: url, Value: "1"})
+        }
+    }
+
+    return kva
+}
+
+// extractURL 从日志行中提取 URL
+func extractURL(line string) string {
+    // 查找 HTTP 请求部分（在引号之间）
+    start := strings.Index(line, "\"")
+    if start == -1 {
+        return ""
+    }
+
+    end := strings.Index(line[start+1:], "\"")
+    if end == -1 {
+        return ""
+    }
+
+    // 提取请求: "GET /path HTTP/1.1"
+    request := line[start+1 : start+1+end]
+
+    // 按空格分割: [GET, /path, HTTP/1.1]
+    parts := strings.Fields(request)
+    if len(parts) < 2 {
+        return ""
+    }
+
+    // 返回 URL（第二部分）
+    return parts[1]
+}
+
+// Reduce: 统计每个 URL 的访问次数
+func Reduce(key string, values []string) string {
+    count := 0
+    for _, v := range values {
+        n, _ := strconv.Atoi(v)
+        count += n
+    }
+    return strconv.Itoa(count)
+}
+```
+
+#### 运行示例
+
+```bash
+# 1. 准备示例日志文件（access-log-*.txt）
+# 2. 启动 Coordinator
+./mrcoordinator access-log-*.txt &
+
+# 3. 启动多个 Worker（使用 urlcount 应用）
+./mrworker urlcount &
+./mrworker urlcount &
+./mrworker urlcount &
+
+# 4. 等待任务完成，查看结果
+cat mr-out-* | sort -t$'\t' -k2 -nr
+```
+
+#### 示例输出
+
+```
+/index.html     14
+/products.html  8
+/about.html     7
+/api/login      6
+/services.html  5
+/contact.html   3
+/api/register   2
+```
+
 ### 更多应用场景
 
 - **倒排索引**：构建文档搜索引擎
-- **URL 访问统计**：分析 Web 服务器日志
 - **分布式排序**：对大规模数据集排序
 - **图计算**：PageRank、社交网络分析
 
